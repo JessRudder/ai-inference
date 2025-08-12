@@ -66,13 +66,23 @@ function mockInputs(inputs: Record<string, string> = {}): void {
  */
 function verifyStandardResponse(): void {
   expect(core.setOutput).toHaveBeenNthCalledWith(1, 'response', 'Hello, user!')
-  expect(core.setOutput).toHaveBeenNthCalledWith(2, 'response-file', expect.stringContaining('modelResponse.txt'))
+  expect(core.setOutput).toHaveBeenNthCalledWith(2, 'response-file', expect.stringContaining('modelResponse-'))
 }
 
 vi.mock('fs', () => ({
   existsSync: mockExistsSync,
   readFileSync: mockReadFileSync,
   writeFileSync: mockWriteFileSync,
+}))
+
+// Mock tmp module to control temporary file creation
+const mockFileSync = vi.fn().mockReturnValue({
+  name: '/secure/temp/dir/modelResponse-abc123.txt',
+  removeCallback: vi.fn(),
+})
+
+vi.mock('tmp', () => ({
+  fileSync: mockFileSync,
 }))
 
 // Mock MCP and inference modules
@@ -268,5 +278,29 @@ describe('main.ts', () => {
 
     expect(core.setFailed).toHaveBeenCalledWith(`File for prompt-file was not found: ${promptFile}`)
     expect(mockProcessExit).toHaveBeenCalledWith(1)
+  })
+
+  it('creates secure temporary files with proper permissions', async () => {
+    mockInputs({
+      prompt: 'Test prompt',
+      'system-prompt': 'You are a test assistant.',
+    })
+
+    await run()
+
+    // Verify tmp.fileSync was called with secure options
+    expect(mockFileSync).toHaveBeenCalledWith({
+      prefix: 'modelResponse-',
+      postfix: '.txt',
+      keep: true, // Keep the file so the action can read it
+    })
+
+    // Verify the response file output uses the secure temporary file
+    expect(core.setOutput).toHaveBeenNthCalledWith(2, 'response-file', '/secure/temp/dir/modelResponse-abc123.txt')
+
+    // Verify content was written to the secure temporary file
+    expect(mockWriteFileSync).toHaveBeenCalledWith('/secure/temp/dir/modelResponse-abc123.txt', 'Hello, user!', 'utf-8')
+
+    expect(mockProcessExit).toHaveBeenCalledWith(0)
   })
 })
